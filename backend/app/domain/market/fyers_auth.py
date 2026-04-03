@@ -1,107 +1,86 @@
 """
-Fyers Auth Module
------------------
-Handles:
-- OAuth login URL generation
-- Callback handling
-- Access token storage in Redis
-- Token reuse until expiry (24h)
+Minimal Fyers Auth (V3 SDK)
+--------------------------
+Purpose:
+- Generate login URL
+- Accept auth_code manually
+- Exchange for access_token
+- Print token
 """
 
-import os
-import time
-from typing import Optional, cast
-import hashlib
-
-import httpx
+import logging
+from fyers_apiv3 import fyersModel
 import redis
-from fastapi import HTTPException
-import urllib.parse
+
+logger = logging.getLogger(__name__)
 
 
-class FyersAuthService:
-    def __init__(self, redis_client: redis.Redis):
-        self.redis = redis_client
+class FyersAuth:
+    def __init__(self, client_id: str, secret_key: str, redirect_uri: str):
+        self.client_id = client_id
+        self.secret_key = secret_key
+        self.redirect_uri = redirect_uri
 
-        # Load from env
-        self.client_id = os.getenv("FYERS_CLIENT_ID")
-        self.secret_key = os.getenv("FYERS_SECRET_KEY")
-        self.redirect_uri = os.getenv("FYERS_REDIRECT_URI")
-        self.static_token = os.getenv("FYERS_ACCESS_TOKEN")
+        # Redis connection (local for now)
+        self.redis = redis.Redis(host="localhost", port=6379, decode_responses=True)
 
-        if not self.client_id or not self.secret_key or not self.redirect_uri:
-            raise ValueError("Missing Fyers credentials in environment variables")
-
-        self.auth_url = "https://api.fyers.in/api/v3/generate-authcode"
-        self.token_url = "https://api.fyers.in/api/v3/token"
-
-        self.redis_key = "fyers:access_token"
-
-    # --------------------------------------------------
+    # ----------------------------------
     # Step 1: Generate Login URL
-    # --------------------------------------------------
-    def get_login_url(self) -> str:
-        """Return Fyers login URL to open in browser"""
-
-        encoded_redirect = urllib.parse.quote(self.redirect_uri, safe="")
-
-        return (
-            f"{self.auth_url}?client_id={self.client_id}"
-            f"&redirect_uri={encoded_redirect}"
-            f"&response_type=code"
-            f"&state=sample_state"
+    # ----------------------------------
+    def generate_login_url(self) -> str:
+        session = fyersModel.SessionModel(
+            client_id=self.client_id,
+            secret_key=self.secret_key,
+            redirect_uri=self.redirect_uri,
+            response_type="code",
         )
 
-    # --------------------------------------------------
-    # Step 2: Exchange auth_code for access token
-    # --------------------------------------------------
-    async def generate_access_token(self, auth_code: str) -> str:
-        raise HTTPException(
-            status_code=501,
-            detail="Token exchange via HTTP is disabled. Use FYERS_ACCESS_TOKEN in .env for now.",
+        url = session.generate_authcode()
+        print("\n🔗 Login URL:")
+        print(url)
+        return url
+
+    # ----------------------------------
+    # Step 2: Exchange auth_code → token
+    # ----------------------------------
+    def generate_access_token(self, auth_code: str) -> str | None:
+        session = fyersModel.SessionModel(
+            client_id=self.client_id,
+            secret_key=self.secret_key,
+            redirect_uri=self.redirect_uri,
+            grant_type="authorization_code",
         )
 
-    # --------------------------------------------------
-    # Step 3: Get Token (Reuse if exists)
-    # --------------------------------------------------
-    def get_access_token(self) -> Optional[str]:
-        """Fetch access token from ENV or Redis"""
+        session.set_token(auth_code)
 
-        if self.static_token:
-            return self.static_token
+        response = session.generate_token()
 
-        token = self.redis.get(self.redis_key)
-        if token:
-            return cast(str, token)
+        print("\n📦 Raw Response:")
+        print(response)
+
+        if response.get("s") == "ok":
+            access_token = response.get("access_token")
+
+            # Store in Redis (24 hours)
+            self.redis.set("fyers_access_token", access_token, ex=86400)
+
+            print("\n✅ ACCESS TOKEN (stored in Redis):")
+            print(access_token)
+
+            return access_token
+
+        print("\n❌ Failed to generate token")
         return None
 
-    # --------------------------------------------------
-    # Step 4: Ensure Token Exists
-    # --------------------------------------------------
-    def require_token(self) -> str:
-        token = self.get_access_token()
-        if not token:
-            raise HTTPException(
-                status_code=401,
-                detail="Fyers token missing. Set FYERS_ACCESS_TOKEN in .env",
-            )
-        return token
+    def get_stored_token(self) -> str | None:
+        token = self.redis.get("fyers_access_token")
 
+        # Ensure token is always a string
+        if isinstance(token, bytes):
+            token = token.decode()
 
-# --------------------------------------------------
-# Helper to create Redis client
-# --------------------------------------------------
-def get_redis_client() -> redis.Redis:
-    return redis.Redis(
-        host=os.getenv("REDIS_HOST", "localhost"),
-        port=int(os.getenv("REDIS_PORT", 6379)),
-        decode_responses=True,
-    )
+        if isinstance(token, str):
+            print("\n📦 Token fetched from Redis")
+            return token
 
-
-# --------------------------------------------------
-# Factory
-# --------------------------------------------------
-def get_fyers_auth_service() -> FyersAuthService:
-    redis_client = get_redis_client()
-    return FyersAuthService(redis_client)
+        return None

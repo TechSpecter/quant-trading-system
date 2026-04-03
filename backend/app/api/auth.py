@@ -1,56 +1,35 @@
-"""
-Auth API Routes
----------------
-Provides endpoints for:
-- Fyers login URL generation
-- OAuth callback handling
-"""
-
-from fastapi import APIRouter, Depends, Query
-from fastapi.responses import RedirectResponse
-
-from app.domain.market.fyers_auth import (
-    FyersAuthService,
-    get_fyers_auth_service,
-)
+from fastapi import APIRouter, Query
+from app.domain.market.fyers_auth import FyersAuth
+from app.core.settings import settings
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
-
-# --------------------------------------------------
-# 1. Login Endpoint
-# --------------------------------------------------
-@router.get("/login")
-def login(fyers_auth: FyersAuthService = Depends(get_fyers_auth_service)):
-    """
-    Returns Fyers login URL
-    """
-    login_url = fyers_auth.get_login_url()
-    return {"login_url": login_url}
-
-
-# --------------------------------------------------
-# 2. Callback Endpoint
-# --------------------------------------------------
-@router.get("/callback")
-async def callback(
-    code: str = Query(..., description="Authorization code from Fyers"),
-    fyers_auth: FyersAuthService = Depends(get_fyers_auth_service),
+# Validate required settings
+if (
+    not settings.FYERS_CLIENT_ID
+    or not settings.FYERS_SECRET_KEY
+    or not settings.FYERS_REDIRECT_URI
 ):
-    """
-    Handles Fyers OAuth callback
-    Exchanges auth code for access token
-    """
+    raise ValueError("Missing Fyers configuration in environment variables")
 
-    await fyers_auth.generate_access_token(code)
-
-    # Redirect to a simple success page (or frontend later)
-    return RedirectResponse(url="/auth/success")
+auth_service = FyersAuth(
+    client_id=str(settings.FYERS_CLIENT_ID),
+    secret_key=str(settings.FYERS_SECRET_KEY),
+    redirect_uri=str(settings.FYERS_REDIRECT_URI),
+)
 
 
-# --------------------------------------------------
-# 3. Success Endpoint (temporary)
-# --------------------------------------------------
-@router.get("/success")
-def success():
-    return {"message": "Fyers authentication successful. Token stored in Redis."}
+@router.get("/login")
+def login():
+    url = auth_service.generate_login_url()
+    return {"login_url": url}
+
+
+@router.get("/callback")
+def callback(auth_code: str = Query(...)):
+    token = auth_service.generate_access_token(auth_code)
+
+    if token:
+        return {"status": "success", "token": token}
+
+    return {"status": "failed"}
