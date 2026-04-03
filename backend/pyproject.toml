@@ -19,6 +19,8 @@ redis = "^7.4.0"
 pydantic = "^2.12.5"
 pyyaml = "^6.0.3"
 httpx = "^0.28.1"
+python-dotenv = "^1.2.2"
+fyers-apiv3 = "^3.1.11"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
