@@ -21,6 +21,7 @@ pyyaml = "^6.0.3"
 httpx = "^0.28.1"
 python-dotenv = "^1.2.2"
 fyers-apiv3 = "^3.1.11"
+greenlet = "^3.3.2"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

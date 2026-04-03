@@ -1,8 +1,9 @@
 nifty50:
-  - "NSE:RELIANCE-EQ"
-  - "NSE:TCS-EQ"
-  - "NSE:HDFCBANK-EQ"
-  - "NSE:INFY-EQ"
+  - NSE:RELIANCE-EQ
+  - NSE:TCS-EQ
+  - NSE:HDFCBANK-EQ
+  - NSE:INFY-EQ
+  - NSE:ICICIBANK-EQ
 
 indices:
   - "NSE:NIFTY50-INDEX"
