@@ -1,0 +1,32 @@
+[tool.poetry]
+name = "quant-trading-system-backend"
+version = "0.1.0"
+description = "Production-grade quantitative trading backend with multi-timeframe signal engine"
+authors = ["Rahul Gupta <mail2guptar@gmail.com>"]
+license = "MIT"
+
+packages = [{ include = "app" }]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+fastapi = "^0.135.3"
+uvicorn = "^0.42.0"
+pandas = "^3.0.2"
+numpy = "^2.4.4"
+sqlalchemy = "^2.0.48"
+asyncpg = "^0.31.0"
+redis = "^7.4.0"
+pydantic = "^2.12.5"
+pyyaml = "^6.0.3"
+httpx = "^0.28.1"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[dependency-groups]
+dev = [
+    "pytest (>=9.0.2,<10.0.0)",
+    "black (>=26.3.1,<27.0.0)",
+    "isort (>=8.0.1,<9.0.0)"
+]

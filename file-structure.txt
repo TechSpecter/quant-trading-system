@@ -1,0 +1,48 @@
+.
+├── backend
+│   ├── app
+│   │   ├── api
+│   │   ├── core
+│   │   ├── db
+│   │   ├── domain
+│   │   ├── main.py
+│   │   ├── schemas
+│   │   └── workers
+│   ├── pyproject.toml
+│   └── tests
+├── config
+│   ├── logging.yaml
+│   └── trading_config.yaml
+├── data
+│   ├── postgres
+│   └── redis
+├── docker-compose.yml
+├── file-structure.txt
+├── frontend
+│   ├── app
+│   │   ├── dashboard
+│   │   ├── settings
+│   │   ├── signals
+│   │   └── trades
+│   ├── components
+│   │   ├── charts
+│   │   ├── tables
+│   │   └── ui
+│   ├── lib
+│   │   └── api.ts
+│   ├── package.json
+│   ├── styles
+│   └── tailwind.config.ts
+├── infrastructure
+│   ├── docker
+│   │   ├── backend.Dockerfile
+│   │   ├── frontend.Dockerfile
+│   │   └── worker.Dockerfile
+│   ├── scripts
+│   │   └── db-init
+│   └── terraform
+│       └── gcp
+├── Makefile
+└── README.md
+
+32 directories, 14 files

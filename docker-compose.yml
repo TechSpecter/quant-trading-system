@@ -1,0 +1,36 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: timescale/timescaledb:latest-pg14
+    container_name: algo-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: algo
+      POSTGRES_PASSWORD: algo
+      POSTGRES_DB: marketdata
+    ports:
+      - "5432:5432"
+    volumes:
+      # Adjusted to map to the root data folder
+      - ./data/postgres:/var/lib/postgresql/data
+      # Maps the SQL script to auto-run on first boot (Corrected path)
+      - ./infrastructure/scripts/db-init:/docker-entrypoint-initdb.d
+    networks:
+      - homelab
+
+  redis:
+    image: redis:7
+    container_name: algo-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      # Adjusted to map to the root data folder
+      - ./data/redis:/data
+    networks:
+      - homelab
+
+networks:
+  homelab:
+    external: true
