@@ -1,9 +1,11 @@
 import logging
 from typing import Optional
 from pathlib import Path
+from datetime import datetime, timedelta
 
 import pandas as pd
 from fyers_apiv3 import fyersModel
+import yaml
 
 from app.core.settings import settings
 from app.db.session import redis_client
@@ -29,6 +31,19 @@ class FyersAPIClient:
         BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
         self.log_dir = BASE_DIR / "logs"
         self.log_dir.mkdir(exist_ok=True)
+
+        # FIX: move to project root (outside backend)
+        PROJECT_ROOT = BASE_DIR.parent
+
+        # Load strategy.yaml config (single source of truth)
+        config_path = PROJECT_ROOT / "config" / "strategy.yaml"
+        print(f"📁 Loading config from: {config_path}")
+        try:
+            with open(config_path, "r") as f:
+                self.strategy_config = yaml.safe_load(f)
+        except Exception as e:
+            logger.error(f"Failed to load strategy.yaml from {config_path}: {e}")
+            self.strategy_config = {}
 
     async def get_active_client(self):
         """Retrieves token from Redis or returns None if re-auth is needed."""
@@ -90,7 +105,11 @@ class FyersAPIClient:
         return None
 
     async def fetch_historical_data(
-        self, symbol: str, resolution: str, date_from: str, date_to: str
+        self,
+        symbol: str,
+        resolution: str,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """Fetch historical OHLCV data from Fyers."""
         client = await self.get_active_client()
@@ -99,16 +118,57 @@ class FyersAPIClient:
             logger.error("No active Fyers client. Please authenticate first.")
             return None
 
+        # 🔥 Load resolution + lookback from strategy.yaml
+        data_cfg = self.strategy_config.get("data", {})
+
+        resolution_map = data_cfg.get("resolution_map", {})
+        lookback_map = data_cfg.get("lookback", {})
+
+        # 🔥 Fallback safety mapping (prevents API errors if YAML fails)
+        default_resolution_map = {
+            "D": "1D",
+            "4H": "240",
+            "1H": "60",
+        }
+
+        default_lookback = {
+            "D": 365,
+            "4H": 90,
+            "1H": 30,
+        }
+
+        # Priority: YAML → fallback → raw
+        api_resolution = resolution_map.get(resolution) or default_resolution_map.get(
+            resolution, resolution
+        )
+        lookback_days = lookback_map.get(resolution) or default_lookback.get(
+            resolution, 30
+        )
+
+        end_date = datetime.utcnow()
+        start_date = end_date - timedelta(days=lookback_days)
+
+        range_from = date_from or start_date.strftime("%Y-%m-%d")
+        range_to = date_to or end_date.strftime("%Y-%m-%d")
+
+        print(
+            f"📊 Requesting {symbol} | TF={resolution} → API={api_resolution} | lookback={lookback_days} | from={range_from} to={range_to}"
+        )
+
         payload = {
             "symbol": symbol,
-            "resolution": resolution,
+            "resolution": api_resolution,
             "date_format": "1",  # yyyy-mm-dd
-            "range_from": date_from,
-            "range_to": date_to,
-            "cont_flag": "1",
+            "range_from": range_from,
+            "range_to": range_to,
+            "cont_flag": 0,
         }
 
         response = client.history(data=payload)
+
+        print(
+            f"📡 Raw response status for {symbol}: {response.get('s') if isinstance(response, dict) else 'invalid'}"
+        )
 
         if isinstance(response, dict) and response.get("s") == "ok":
             candles = response.get("candles", [])
@@ -118,13 +178,24 @@ class FyersAPIClient:
                 return None
 
             df = pd.DataFrame(candles)
+            print(f"📊 Received rows for {symbol}: {len(df)}")
             df.columns = ["timestamp", "open", "high", "low", "close", "volume"]
 
             # Convert timestamp to IST
-            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s")
-            df["timestamp"] = (
-                df["timestamp"].dt.tz_localize("UTC").dt.tz_convert("Asia/Kolkata")
-            )
+            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s", utc=True)
+            df["timestamp"] = df["timestamp"].dt.tz_convert("Asia/Kolkata")
+
+            # Ensure sufficient data for indicators (relaxed for intraday like 4H)
+            min_required = 200 if resolution == "D" else 100
+
+            if len(df) < min_required:
+                logger.warning(
+                    f"⚠️ Not enough candles for {symbol}: {len(df)} rows (required={min_required})"
+                )
+            else:
+                logger.info(
+                    f"✅ Sufficient candles for {symbol}: {len(df)} rows (required={min_required})"
+                )
 
             return df
 

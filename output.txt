@@ -1,0 +1,35 @@
+cd backend && poetry run python tests/scripts/test_strategy.py
+🚀 Script started
+📁 Loading config from: /Users/rahul/Code/quant-trading-system/config/strategy.yaml
+📁 Loading config from: /Users/rahul/Code/quant-trading-system/config/strategy.yaml
+
+================================================================================
+[96m🎯 TRADING OPPORTUNITIES[0m
+================================================================================
+
+[92m🔥 HIGH CONVICTION TRADES[0m
++------------------+--------+-------+-------+----------+--------------+-------------+
+|      Symbol      | Signal | State | Score | Trend(D) | Pullback(4H) | Trigger(4H) |
++------------------+--------+-------+-------+----------+--------------+-------------+
+| NSE:COALINDIA-EQ |  [92mBUY[0m   | SETUP |  70   |          |              |             |
+| NSE:POWERGRID-EQ |  [92mBUY[0m   | SETUP |  70   |          |              |             |
++------------------+--------+-------+-------+----------+--------------+-------------+
+
+[93m👀 WATCHLIST[0m
++-------------------+----------+-----------+-------+----------+--------------+-------------+
+|      Symbol       |  Signal  |   State   | Score | Trend(D) | Pullback(4H) | Trigger(4H) |
++-------------------+----------+-----------+-------+----------+--------------+-------------+
+|    NSE:BEL-EQ     | [93mWEAK_BUY[0m |   SETUP   |  40   |          |              |             |
+|  NSE:HINDALCO-EQ  | [93mWEAK_BUY[0m | TRIGGERED |  40   |          |              |             |
+|  NSE:JSWSTEEL-EQ  | [93mWEAK_BUY[0m | TRIGGERED |  40   |          |              |             |
+|    NSE:NTPC-EQ    | [93mWEAK_BUY[0m | TRIGGERED |  40   |          |              |             |
+|    NSE:ONGC-EQ    | [93mWEAK_BUY[0m | TRIGGERED |  40   |          |              |             |
+|    NSE:SBIN-EQ    | [93mWEAK_BUY[0m |   SETUP   |  40   |          |              |             |
+| NSE:SHRIRAMFIN-EQ | [93mWEAK_BUY[0m | TRIGGERED |  40   |          |              |             |
+| NSE:TATASTEEL-EQ  | [93mWEAK_BUY[0m |   SETUP   |  40   |          |              |             |
+|   NSE:TITAN-EQ    | [93mWEAK_BUY[0m | TRIGGERED |  40   |          |              |             |
++-------------------+----------+-----------+-------+----------+--------------+-------------+
+
+================================================================================
+Total Stocks Processed: 50
+================================================================================

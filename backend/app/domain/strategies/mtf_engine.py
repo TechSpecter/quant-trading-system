@@ -8,14 +8,49 @@ class MTFEngine:
         self.ind_cfg = config.get("indicators", {})
         self.entry_cfg = config.get("entry", {})
         self.state_cfg = config.get("state", {})
+        self.scoring_cfg = config.get(
+            "scoring",
+            {
+                "trend": 40,
+                "pullback": 30,
+                "trigger": 30,
+            },
+        )
 
     # =========================
     # HELPER FUNCTIONS
     # =========================
 
+    def evaluate_rules(self, row: pd.Series, rules) -> bool:
+        """Generic rule evaluator from config"""
+        for rule in rules:
+            left = row.get(rule.get("left"))
+            right = row.get(rule.get("right"))
+
+            if left is None or right is None:
+                return False
+
+            op = rule.get("operator")
+
+            if op == ">" and not (left > right):
+                return False
+            if op == "<" and not (left < right):
+                return False
+            if op == ">=" and not (left >= right):
+                return False
+            if op == "<=" and not (left <= right):
+                return False
+
+        return True
+
     def is_bull_trend(self, row: pd.Series) -> bool:
-        sma_col = f"SMA_{self.ind_cfg['sma']['long_term']}"
-        return row["close"] > row[sma_col]
+        """Config-driven trend evaluation"""
+        trend_rules = self.config.get("trend", {}).get("rules", [])
+
+        if not trend_rules:
+            return False
+
+        return self.evaluate_rules(row, trend_rules)
 
     def is_pullback(self, df: pd.DataFrame, i: int) -> bool:
         row = df.iloc[i]
@@ -79,43 +114,386 @@ class MTFEngine:
     # MAIN ENGINE
     # =========================
 
-    def generate_signal(self, df: pd.DataFrame) -> Dict[str, Any]:
+    def generate_signal(self, mtf_data: Dict[str, pd.DataFrame]) -> Dict[str, Any]:
         """
-        Process dataframe and return latest signal
+        MTF logic:
+        - Daily (higher TF): trend (Gate 1)
+        - Lower TF (e.g. 4H): setup + trigger (Gate 2 & 3)
         """
 
+        print("\n🔍 MTF DEBUG INPUT:")
+        for tf, df in mtf_data.items():
+            if df is None:
+                print(f"   {tf}: None")
+            else:
+                print(f"   {tf}: rows={len(df)}")
+
+        # Resolve timeframes
+        tf_cfg = self.config.get("timeframes", {})
+        primary_tf = tf_cfg.get("primary", "D")
+        confirm_tf = tf_cfg.get("confirmation", "4H")
+
+        df_primary = mtf_data.get(primary_tf)
+        df_confirm = mtf_data.get(confirm_tf)
+
+        # Safety checks
+        if df_primary is None or df_primary.empty:
+            print("❌ Missing primary timeframe data")
+            return {"signal": "NO_DATA", "state": "NO_DATA", "gate_summary": {}}
+
+        confirm_available = df_confirm is not None and not df_confirm.empty
+
+        if not confirm_available:
+            print("⚠️ Missing confirmation timeframe data → continuing with trend only")
+            last_primary = df_primary.iloc[-1]
+            trend_weight = self.scoring_cfg.get("trend", 40)
+            gate1_pass = self.is_bull_trend(last_primary)
+
+            sma_col = f"SMA_{self.ind_cfg['sma']['long_term']}"
+
+            score = trend_weight if gate1_pass else 0
+
+            return {
+                "signal": "WEAK_BUY" if gate1_pass else "NO_TRADE",
+                "score": score,
+                "state": "NO_CONFIRM",
+                "entry_price": None,
+                "stop_loss": None,
+                "gate_summary": {
+                    "gate_1_trend": {
+                        "passed": bool(gate1_pass),
+                        "status": "PASS" if gate1_pass else "FAIL",
+                        "rule_debug": f"close={last_primary.get('close')} | EMA20={last_primary.get('EMA_20')} | EMA50={last_primary.get('EMA_50')} | SMA200={last_primary.get(sma_col)}",
+                        "close": (
+                            float(last_primary.get("close", 0))
+                            if last_primary.get("close") is not None
+                            else None
+                        ),
+                        "EMA_50": (
+                            float(val)
+                            if (val := last_primary.get("EMA_50")) is not None
+                            else None
+                        ),
+                        "EMA_20": (
+                            float(val)
+                            if (val := last_primary.get("EMA_20")) is not None
+                            else None
+                        ),
+                        "SMA_200": (
+                            float(val)
+                            if sma_col in last_primary
+                            and (val := last_primary.get(sma_col)) is not None
+                            else None
+                        ),
+                    },
+                    "gate_2_pullback": None,
+                    "gate_3_trigger": None,
+                },
+            }
+
+        # =========================
+        # GATE 1 (Trend on higher TF)
+        # =========================
+        last_primary = df_primary.iloc[-1]
+        gate1_pass = self.is_bull_trend(last_primary)
+
+        score = 0
+        trend_weight = self.scoring_cfg.get("trend", 40)
+        if gate1_pass:
+            score += trend_weight
+
+        # =========================
+        # GATE 2 & 3 (on lower TF)
+        # =========================
         state = "IDLE"
         signal = "HOLD"
         entry_price = None
         stop_loss = None
+        target_price = None
 
-        for i in range(len(df)):
-            row = df.iloc[i]
+        if df_confirm is not None:
+            print(f"\n📊 Running lower timeframe logic: rows={len(df_confirm)}")
 
-            # --- Gate 1: Macro Trend ---
-            if not self.is_bull_trend(row):
-                state = "IDLE"
-                continue
+        if df_confirm is not None:
+            for i in range(len(df_confirm)):
+                row = df_confirm.iloc[i]
 
-            # --- Gate 2: Setup ---
-            if self.is_pullback(df, i):
-                state = "SETUP"
+                if not gate1_pass:
+                    state = "IDLE"
+                    continue
 
-            # --- Gate 3: Trigger ---
-            if state == "SETUP" and self.is_trigger(df, i):
-                state = "TRIGGERED"
-                signal = "BUY"
-                entry_price = row["close"]
+                # Gate 2: Pullback
+                if self.is_pullback(df_confirm, i):
+                    state = "SETUP"
+                    print(f"📍 Pullback detected at index {i}")
 
-                # Stop loss = ATR based
-                atr = row.get("ATR", None)
-                if atr:
-                    multiplier = self.ind_cfg["atr"]["stop_loss_multiplier"]
-                    stop_loss = entry_price - (multiplier * atr)
+                # Gate 3: Trigger
+                if state == "SETUP" and self.is_trigger(df_confirm, i):
+                    state = "TRIGGERED"
+                    signal = "BUY"
+                    entry_price = row["close"]
+                    print(f"🚀 Trigger fired at index {i} price={entry_price}")
+
+                    atr = row.get("ATR", None)
+
+                    risk_cfg = self.config.get("risk", {})
+                    atr_cfg = self.ind_cfg.get("atr", {})
+
+                    mode = risk_cfg.get("mode", "fixed_rr")
+
+                    if atr is not None and mode == "atr":
+                        sl_mult = atr_cfg.get("stop_loss_multiplier", 1.5)
+                        tgt_mult = atr_cfg.get("target_multiplier", 3)
+
+                        stop_loss = entry_price - (sl_mult * atr)
+                        target_price = entry_price + (tgt_mult * atr)
+
+                    elif atr is not None:
+                        # fallback to RR mode
+                        sl_mult = atr_cfg.get("stop_loss_multiplier", 1.5)
+                        stop_loss = entry_price - (sl_mult * atr)
+
+                        rr_ratio = risk_cfg.get("reward_to_risk_ratio", 2)
+                        risk_val = entry_price - stop_loss
+                        target_price = entry_price + (risk_val * rr_ratio)
+
+                    # 🔥 VALIDATION: Ensure logical trade structure
+                    if stop_loss is not None and entry_price is not None:
+                        if stop_loss >= entry_price:
+                            print("⚠️ Invalid SL > Entry, fixing...")
+                            stop_loss = entry_price * 0.98
+
+                    if target_price is not None and entry_price is not None:
+                        if target_price <= entry_price:
+                            print("⚠️ Invalid Target <= Entry, fixing...")
+                            target_price = entry_price * 1.04
+
+                    # 🚫 FINAL VALIDATION: If still invalid, discard trade levels
+                    if (
+                        entry_price is not None
+                        and stop_loss is not None
+                        and target_price is not None
+                    ):
+                        if not (entry_price > stop_loss and target_price > entry_price):
+                            print("🚫 Invalid trade structure → clearing SL/Target")
+                            stop_loss = None
+                            target_price = None
+
+        # =========================
+        # DEBUG SUMMARY
+        # =========================
+        if not confirm_available or df_confirm is None or len(df_confirm) == 0:
+            last_confirm = None
+        else:
+            last_confirm = df_confirm.iloc[-1]
+
+        gate2_pass = False
+        gate3_pass = False
+
+        if confirm_available and df_confirm is not None and len(df_confirm) > 0:
+            last_index = len(df_confirm) - 1
+            try:
+                gate2_pass = bool(self.is_pullback(df_confirm, last_index))
+            except Exception:
+                gate2_pass = False
+
+            try:
+                gate3_pass = bool(self.is_trigger(df_confirm, last_index))
+            except Exception:
+                gate3_pass = False
+
+        vol = None
+        vol_ma = None
+
+        if last_confirm is not None:
+            vol = last_confirm.get("volume", None)
+            vol_ma = last_confirm.get("VOL_MA", None)
+
+        vol_condition = None
+        if vol is not None and vol_ma is not None:
+            vol_condition = vol <= vol_ma
+
+        volume_spike = None
+        if vol is not None and vol_ma is not None:
+            multiplier = self.ind_cfg["volume"]["breakout_multiplier"]
+            volume_spike = vol >= vol_ma * multiplier
+
+        pullback_weight = self.scoring_cfg.get("pullback", 30)
+        if gate2_pass:
+            score += pullback_weight
+
+        trigger_weight = self.scoring_cfg.get("trigger", 30)
+        if gate3_pass:
+            score += trigger_weight
+
+        sma_col = f"SMA_{self.ind_cfg['sma']['long_term']}"
+
+        max_score = (
+            self.scoring_cfg.get("trend", 40)
+            + self.scoring_cfg.get("pullback", 30)
+            + self.scoring_cfg.get("trigger", 30)
+        )
+
+        # Map score to signal
+        if score >= 0.8 * max_score:
+            signal = "STRONG_BUY"
+        elif score >= 0.5 * max_score:
+            signal = "BUY"
+        elif score >= self.scoring_cfg.get("trend", 40):
+            signal = "WEAK_BUY"
+        else:
+            signal = "NO_TRADE"
+
+        # =========================
+        # ENTRY SIGNAL & REASONS
+        # =========================
+        entry_signal = "WATCH"
+        trigger_reason = None
+
+        if gate1_pass and gate2_pass and gate3_pass:
+            entry_signal = "BUY_NOW"
+            trigger_reason = "EMA5 crossed above EMA10 with volume"
+        elif gate1_pass and gate2_pass:
+            entry_signal = "WAIT"
+            trigger_reason = "Pullback detected, waiting for trigger"
+        elif gate1_pass:
+            entry_signal = "WATCH"
+            trigger_reason = "Uptrend only, no pullback"
+        else:
+            entry_signal = "AVOID"
+            trigger_reason = "No bullish structure"
+
+        target_price = None if "target_price" not in locals() else target_price
+
+        # =========================
+        # FALLBACK RISK CALCULATION (ONLY FOR VALID CONTEXT)
+        # =========================
+        if stop_loss is None and last_confirm is not None:
+            atr_val = last_confirm.get("ATR", None)
+            close_val = last_confirm.get("close", None)
+
+            risk_cfg = self.config.get("risk", {})
+            atr_cfg = self.ind_cfg.get("atr", {})
+            mode = risk_cfg.get("mode", "fixed_rr")
+
+            if atr_val is not None and close_val is not None:
+                sl_mult = atr_cfg.get("stop_loss_multiplier", 1.5)
+                stop_loss = close_val - (sl_mult * atr_val)
+
+                if mode == "atr":
+                    tgt_mult = atr_cfg.get("target_multiplier", 3)
+                    target_price = close_val + (tgt_mult * atr_val)
+                else:
+                    rr_ratio = risk_cfg.get("reward_to_risk_ratio", 2)
+                    risk_val = close_val - stop_loss
+                    target_price = close_val + (risk_val * rr_ratio)
+
+                # 🔥 STRICT VALIDATION
+                if not (close_val > stop_loss and target_price > close_val):
+                    print("⚠️ Adjusting fallback SL/Target")
+                    stop_loss = close_val * 0.98
+                    target_price = close_val * 1.04
+
+        # =========================
+        # FINAL SANITY CHECK (GLOBAL)
+        # =========================
+        if (
+            entry_price is not None
+            and stop_loss is not None
+            and target_price is not None
+        ):
+            if not (entry_price > stop_loss and target_price > entry_price):
+                print("⚠️ Final adjustment of SL/Target")
+                stop_loss = entry_price * 0.98
+                target_price = entry_price * 1.04
+
+        # Ensure entry_price is set if missing but last_confirm is available
+        if entry_price is None and last_confirm is not None:
+            entry_price = last_confirm.get("close", None)
 
         return {
             "signal": signal,
+            "entry_signal": entry_signal,
+            "trigger_reason": trigger_reason,
+            "score": score,
             "state": state,
             "entry_price": entry_price,
             "stop_loss": stop_loss,
+            "target_price": target_price,
+            "gate_summary": {
+                "gate_1_trend": {
+                    "passed": bool(gate1_pass),
+                    "status": "PASS" if gate1_pass else "FAIL",
+                    "rule_debug": f"close={last_primary.get('close')} | EMA20={last_primary.get('EMA_20')} | EMA50={last_primary.get('EMA_50')} | SMA200={last_primary.get(sma_col)}",
+                    "close": (
+                        float(last_primary.get("close", 0))
+                        if last_primary.get("close") is not None
+                        else None
+                    ),
+                    "EMA_50": (
+                        float(val)
+                        if (val := last_primary.get("EMA_50")) is not None
+                        else None
+                    ),
+                    "EMA_20": (
+                        float(val)
+                        if (val := last_primary.get("EMA_20")) is not None
+                        else None
+                    ),
+                    "SMA_200": (
+                        float(val)
+                        if sma_col in last_primary
+                        and (val := last_primary.get(sma_col)) is not None
+                        else None
+                    ),
+                },
+                "gate_2_pullback": {
+                    "passed": bool(gate2_pass),
+                    "status": "PASS" if gate2_pass else "FAIL",
+                    "ema_20": (
+                        float(val)
+                        if last_confirm is not None
+                        and (val := last_confirm.get("EMA_20")) is not None
+                        else None
+                    ),
+                    "ema_50": (
+                        float(val)
+                        if last_confirm is not None
+                        and (val := last_confirm.get("EMA_50")) is not None
+                        else None
+                    ),
+                    "rsi": (
+                        float(val)
+                        if last_confirm is not None
+                        and (val := last_confirm.get("RSI")) is not None
+                        else None
+                    ),
+                    "volume_condition": (
+                        "PASS"
+                        if vol_condition is True
+                        else "FAIL" if vol_condition is False else "NA"
+                    ),
+                },
+                "gate_3_trigger": {
+                    "passed": bool(gate3_pass),
+                    "status": "PASS" if gate3_pass else "FAIL",
+                    "ema_5": (
+                        float(val)
+                        if last_confirm is not None
+                        and (val := last_confirm.get("EMA_5")) is not None
+                        else None
+                    ),
+                    "ema_10": (
+                        float(val)
+                        if last_confirm is not None
+                        and (val := last_confirm.get("EMA_10")) is not None
+                        else None
+                    ),
+                    "volume_spike": (
+                        "PASS"
+                        if volume_spike is True
+                        else "FAIL" if volume_spike is False else "NA"
+                    ),
+                },
+            },
         }

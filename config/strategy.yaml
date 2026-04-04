@@ -1,14 +1,27 @@
-
-
 # =========================
 # STRATEGY CONFIGURATION
 # =========================
 
 strategy:
   name: swing_mtf_v1
-  timeframe:
-    trend: "D"        # Daily timeframe
-    entry: "15"       # 15-minute timeframe
+
+  # Multi-Timeframe Configuration
+  timeframes:
+    primary: "D"      # Higher timeframe (trend)
+    confirmation: "4H"  # Lower timeframe (entry/trigger)
+
+  data:
+    # NOTE: Fyers intraday (<=240 min) supports max 100 days. Keep 4H/1H <= 90 for safety.
+    lookback:
+      D: 365
+      "4H": 90
+      "1H": 90
+      volume_lookback_days: 3  # fallback for volume-based calculations
+
+    resolution_map:
+      D: "1D"
+      "4H": "240"
+      "1H": "60"
 
 # =========================
 # MARKET FILTER
@@ -38,11 +51,34 @@ indicators:
   volume:
     ma_period: 20
     breakout_multiplier: 1.2
-    lookback_days: 3
+    lookback_days: 3   # number of days to evaluate volume breakout window
 
   atr:
     period: 14
     stop_loss_multiplier: 1.5
+    target_multiplier: 3        # ATR-based target (e.g., 3x ATR)
+    use_for_stop_loss: true     # enable ATR SL
+    use_for_target: true        # enable ATR target
+
+# =========================
+# TREND RULES (CONFIG-DRIVEN)
+# =========================
+trend:
+  rules:
+    - type: comparison
+      left: close
+      operator: ">"
+      right: SMA_200
+
+    - type: comparison
+      left: EMA_50
+      operator: ">"
+      right: SMA_200
+
+    - type: comparison
+      left: EMA_20
+      operator: ">"
+      right: EMA_50
 
 # =========================
 # ENTRY RULES
@@ -74,6 +110,13 @@ exit:
 risk:
   capital_per_trade_percent: 1
 
+  # Risk Reward Configuration
+  reward_to_risk_ratio: 2        # fallback RR if ATR disabled
+  fixed_rr_enabled: true
+
+  # Mode selection
+  mode: "atr"                  # options: "fixed_rr" | "atr"
+
 # =========================
 # STATE MACHINE
 # =========================
@@ -84,3 +127,13 @@ state:
     - SETUP
     - ARMED
     - TRIGGERED
+
+# =========================
+# SCORING CONFIGURATION
+# =========================
+scoring:
+  trend: 40       # weight for higher timeframe trend (Gate 1)
+  pullback: 30    # weight for pullback validation (Gate 2)
+  trigger: 30     # weight for entry trigger (Gate 3)
+
+# Optional: you can tweak these later without changing code
