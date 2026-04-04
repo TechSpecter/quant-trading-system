@@ -35,7 +35,6 @@ async def main():
 
     # Load universe
     symbols = load_universe()
-    universe_name = os.environ.get("UNIVERSE_NAME", "default")
     total_symbols = len(symbols)
     if DEBUG:
         print("📊 Loaded symbols:", symbols)
@@ -49,6 +48,7 @@ async def main():
             print("✅ DB session created")
 
         service = StrategyService(db)
+        universe_name = getattr(service, "universe_name", None)
         if DEBUG:
             print("🧠 MTF Config Loaded from YAML")
 
@@ -196,20 +196,27 @@ async def main():
                 sl_val = round(sl, 2) if isinstance(sl, (int, float)) else ""
 
                 last_price = round(close, 2) if isinstance(close, (int, float)) else ""
-                # 🔥 Entry / Target / RR from engine (single source of truth)
-                entry_price = last_price
+
+                # ✅ Entry price from engine (fallback to last price if missing)
+                entry_raw = r.get("entry_price")
+                entry_price = (
+                    round(entry_raw, 2)
+                    if isinstance(entry_raw, (int, float))
+                    else last_price
+                )
+
                 target = r.get("target_price")
                 target_price = (
                     round(target, 2) if isinstance(target, (int, float)) else ""
                 )
 
                 if (
-                    isinstance(close, (int, float))
+                    isinstance(entry_price, (int, float))
                     and isinstance(sl, (int, float))
                     and isinstance(target, (int, float))
                 ):
-                    risk = close - sl
-                    reward = target - close
+                    risk = entry_price - sl
+                    reward = target - entry_price
                     if risk > 0 and reward > 0:
                         rr_val = round(reward / risk, 2)
                         rr = f"1:{rr_val}"
@@ -257,7 +264,8 @@ async def main():
         ]
 
         print("\n" + "=" * 80)
-        print(f"{Colors.CYAN}📦 Universe: {universe_name}{Colors.RESET}")
+        if universe_name:
+            print(f"{Colors.CYAN}📦 Universe: {universe_name}{Colors.RESET}")
         print(f"{Colors.CYAN}🔎 Symbols Scanned: {total_symbols}{Colors.RESET}")
 
         # 🔥 Market context (if available)

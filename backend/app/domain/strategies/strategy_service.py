@@ -204,13 +204,14 @@ class StrategyService:
             if market_trend is False:
                 if res.get("signal") in ["BUY", "WEAK_BUY"]:
                     res["signal"] = "HOLD"
+                    res["state"] = "AVOID"
 
                     existing_reason = res.get("reason")
 
                     if existing_reason:
-                        res["reason"] = f"{existing_reason} | NIFTY50 not in uptrend"
+                        res["reason"] = f"{existing_reason} | Market (NIFTY50) bearish"
                     else:
-                        res["reason"] = "NIFTY50 not in uptrend"
+                        res["reason"] = "Market (NIFTY50) bearish"
 
             results.append(res)
 

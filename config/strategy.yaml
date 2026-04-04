@@ -92,6 +92,10 @@ entry:
     ema_cross: true
     volume_confirmation: true
 
+  execution:
+    price_source: "high"        # options: high | close
+    buffer_percent: 0.001        # 0.1% buffer above trigger price
+
 # =========================
 # EXIT RULES
 # =========================
@@ -112,7 +116,7 @@ risk:
 
   # Risk Reward Configuration
   reward_to_risk_ratio: 2        # fallback RR if ATR disabled
-  fixed_rr_enabled: true
+  fixed_rr_enabled: false
 
   # Mode selection
   mode: "atr"                  # options: "fixed_rr" | "atr"

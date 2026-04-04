@@ -231,8 +231,22 @@ class MTFEngine:
                 if state == "SETUP" and self.is_trigger(df_confirm, i):
                     state = "TRIGGERED"
                     signal = "BUY"
-                    entry_price = row["close"]
-                    print(f"🚀 Trigger fired at index {i} price={entry_price}")
+
+                    # 🔧 CONFIG-DRIVEN ENTRY PRICE
+                    exec_cfg = self.entry_cfg.get("execution", {})
+                    price_source = exec_cfg.get("price_source", "close")
+                    buffer_pct = exec_cfg.get("buffer_percent", 0)
+
+                    base_price = (
+                        row.get("high") if price_source == "high" else row.get("close")
+                    )
+
+                    if base_price is not None:
+                        entry_price = base_price * (1 + buffer_pct)
+                    else:
+                        entry_price = None
+
+                    print(f"🚀 Trigger fired at index {i} entry_price={entry_price}")
 
                     atr = row.get("ATR", None)
 
@@ -241,21 +255,49 @@ class MTFEngine:
 
                     mode = risk_cfg.get("mode", "fixed_rr")
 
-                    if atr is not None and mode == "atr":
+                    if atr is not None:
                         sl_mult = atr_cfg.get("stop_loss_multiplier", 1.5)
                         tgt_mult = atr_cfg.get("target_multiplier", 3)
 
-                        stop_loss = entry_price - (sl_mult * atr)
-                        target_price = entry_price + (tgt_mult * atr)
-
-                    elif atr is not None:
-                        # fallback to RR mode
-                        sl_mult = atr_cfg.get("stop_loss_multiplier", 1.5)
+                        # 🔻 Stop loss (ATR based)
                         stop_loss = entry_price - (sl_mult * atr)
 
+                        # 🔺 ATR target
+                        atr_target = entry_price + (tgt_mult * atr)
+
+                        # 🔺 Structure target (recent swing high)
+                        lookback = self.config.get("target", {}).get(
+                            "swing_lookback", 20
+                        )
+                        start_idx = max(0, i - lookback)
+                        swing_high = df_confirm.iloc[start_idx : i + 1]["high"].max()
+
+                        # 🔥 CONFIG-DRIVEN TARGET LOGIC
+                        risk_cfg = self.config.get("risk", {})
+                        fixed_rr_enabled = risk_cfg.get("fixed_rr_enabled", False)
                         rr_ratio = risk_cfg.get("reward_to_risk_ratio", 2)
-                        risk_val = entry_price - stop_loss
-                        target_price = entry_price + (risk_val * rr_ratio)
+
+                        # Calculate risk from SL
+                        risk = (
+                            entry_price - stop_loss if stop_loss is not None else None
+                        )
+
+                        if fixed_rr_enabled and risk is not None and risk > 0:
+                            # 🎯 FIXED RR MODE
+                            target_price = entry_price + (risk * rr_ratio)
+                            print(
+                                f"🎯 Fixed RR Target={target_price:.2f} (RR={rr_ratio})"
+                            )
+                        else:
+                            # 🎯 DYNAMIC MODE (ATR + STRUCTURE)
+                            if swing_high is not None and swing_high > entry_price:
+                                target_price = swing_high
+                            else:
+                                target_price = atr_target
+
+                        print(
+                            f"🎯 ATR Target={atr_target:.2f} | Swing High={swing_high:.2f} | Final Target={target_price:.2f}"
+                        )
 
                     # 🔥 VALIDATION: Ensure logical trade structure
                     if stop_loss is not None and entry_price is not None:
@@ -268,16 +310,42 @@ class MTFEngine:
                             print("⚠️ Invalid Target <= Entry, fixing...")
                             target_price = entry_price * 1.04
 
-                    # 🚫 FINAL VALIDATION: If still invalid, discard trade levels
+                    # 🔥 STRICT BUY VALIDATION (never allow invalid structure)
+                    if entry_price is not None:
+                        if stop_loss is None or stop_loss >= entry_price:
+                            print("⚠️ Fixing SL below entry")
+                            stop_loss = entry_price * 0.98
+
+                        if target_price is None or target_price <= entry_price:
+                            print("⚠️ Fixing Target above entry")
+                            target_price = entry_price * 1.04
+
+                    # 🔥 RISK-REWARD FILTER (CONFIG DRIVEN)
+                    rr_cfg = self.config.get("risk", {})
+                    min_rr = rr_cfg.get("min_rr", 1.5)
+
                     if (
                         entry_price is not None
                         and stop_loss is not None
                         and target_price is not None
                     ):
-                        if not (entry_price > stop_loss and target_price > entry_price):
-                            print("🚫 Invalid trade structure → clearing SL/Target")
-                            stop_loss = None
-                            target_price = None
+                        risk = entry_price - stop_loss
+                        reward = target_price - entry_price
+
+                        if risk > 0:
+                            rr = reward / risk
+                            print(f"📊 RR calculated: {rr:.2f}")
+
+                            if rr < min_rr:
+                                print(
+                                    f"❌ Skipping trade due to low RR ({rr:.2f} < {min_rr})"
+                                )
+                                signal = "NO_TRADE"
+                                entry_signal = "SKIP"
+                                trigger_reason = f"Low RR ({rr:.2f})"
+                                entry_price = None
+                                target_price = None
+                                stop_loss = None
 
         # =========================
         # DEBUG SUMMARY
@@ -368,7 +436,7 @@ class MTFEngine:
         # =========================
         # FALLBACK RISK CALCULATION (ONLY FOR VALID CONTEXT)
         # =========================
-        if stop_loss is None and last_confirm is not None:
+        if stop_loss is None and last_confirm is not None and state != "TRIGGERED":
             atr_val = last_confirm.get("ATR", None)
             close_val = last_confirm.get("close", None)
 
@@ -380,19 +448,35 @@ class MTFEngine:
                 sl_mult = atr_cfg.get("stop_loss_multiplier", 1.5)
                 stop_loss = close_val - (sl_mult * atr_val)
 
-                if mode == "atr":
-                    tgt_mult = atr_cfg.get("target_multiplier", 3)
-                    target_price = close_val + (tgt_mult * atr_val)
+                tgt_mult = atr_cfg.get("target_multiplier", 3)
+
+                atr_target = close_val + (tgt_mult * atr_val)
+
+                lookback = self.config.get("target", {}).get("swing_lookback", 20)
+                if df_confirm is not None and not df_confirm.empty:
+                    start_idx = max(0, len(df_confirm) - lookback)
+                    swing_high = df_confirm.iloc[start_idx:]["high"].max()
                 else:
-                    rr_ratio = risk_cfg.get("reward_to_risk_ratio", 2)
-                    risk_val = close_val - stop_loss
-                    target_price = close_val + (risk_val * rr_ratio)
+                    swing_high = None
+
+                if swing_high is not None and swing_high > close_val:
+                    target_price = swing_high
+                else:
+                    target_price = atr_target
 
                 # 🔥 STRICT VALIDATION
-                if not (close_val > stop_loss and target_price > close_val):
-                    print("⚠️ Adjusting fallback SL/Target")
+                if stop_loss >= close_val:
                     stop_loss = close_val * 0.98
+
+                if target_price <= close_val:
                     target_price = close_val * 1.04
+
+        # Ensure SL/Target always aligned with BUY logic
+        if entry_price is not None:
+            if stop_loss is not None and stop_loss >= entry_price:
+                stop_loss = entry_price * 0.98
+            if target_price is not None and target_price <= entry_price:
+                target_price = entry_price * 1.04
 
         # =========================
         # FINAL SANITY CHECK (GLOBAL)
@@ -410,6 +494,31 @@ class MTFEngine:
         # Ensure entry_price is set if missing but last_confirm is available
         if entry_price is None and last_confirm is not None:
             entry_price = last_confirm.get("close", None)
+
+        # 🔥 GLOBAL RISK-REWARD FILTER (FINAL SAFETY)
+        rr_cfg = self.config.get("risk", {})
+        min_rr = rr_cfg.get("min_rr", 1.5)
+
+        if (
+            entry_price is not None
+            and stop_loss is not None
+            and target_price is not None
+        ):
+            risk = entry_price - stop_loss
+            reward = target_price - entry_price
+
+            if risk > 0:
+                rr = reward / risk
+                print(f"📊 Final RR check: {rr:.2f}")
+
+                if rr < min_rr:
+                    print(f"❌ Final RR filter triggered: {rr:.2f} < {min_rr}")
+                    signal = "NO_TRADE"
+                    entry_signal = "SKIP"
+                    trigger_reason = f"Low RR ({rr:.2f})"
+                    entry_price = None
+                    target_price = None
+                    stop_loss = None
 
         return {
             "signal": signal,
