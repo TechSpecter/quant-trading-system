@@ -1,5 +1,6 @@
 from sqlalchemy import text
 import pandas as pd
+from app.core.utils.market_utils import is_index
 
 
 class MarketRepository:
@@ -36,6 +37,8 @@ class MarketRepository:
         """
         )
 
+        is_idx = is_index(symbol)
+
         for r in df.to_dict("records"):
             await db.execute(
                 query,
@@ -47,7 +50,7 @@ class MarketRepository:
                     "high": r["high"],
                     "low": r["low"],
                     "close": r["close"],
-                    "volume": r["volume"],
+                    "volume": None if is_idx else r["volume"],
                 },
             )
 

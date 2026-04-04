@@ -4,13 +4,22 @@ from app.core.settings import settings
 
 
 def load_universe():
-    """Load symbols from universe.yaml based on active group in config."""
-    # Project root
+    """Load symbols from universe.yaml based on active group in trading_config.yaml."""
     BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 
-    # Read from settings if available, else fallback
-    universe_rel_path = getattr(settings, "UNIVERSE_PATH", "config/universe.yaml")
-    active_group = getattr(settings, "ACTIVE_UNIVERSE_GROUP", "nifty50")
+    # Load trading config
+    trading_config_path = BASE_DIR / "config/trading_config.yaml"
+
+    if not trading_config_path.exists():
+        raise FileNotFoundError(f"Trading config not found at {trading_config_path}")
+
+    with open(trading_config_path, "r") as f:
+        trading_config = yaml.safe_load(f) or {}
+
+    universe_config = trading_config.get("universe_config", {})
+
+    universe_rel_path = universe_config.get("path", "config/universe.yaml")
+    active_group = universe_config.get("active_group", "nifty50")
 
     universe_path = BASE_DIR / universe_rel_path
 
@@ -20,11 +29,7 @@ def load_universe():
     with open(universe_path, "r") as f:
         data = yaml.safe_load(f) or {}
 
-    symbols = data.get(active_group)
+    if active_group not in data:
+        raise ValueError(f"Active group '{active_group}' not found in {universe_path}")
 
-    if not symbols:
-        raise ValueError(
-            f"Active group '{active_group}' not found or empty in {universe_path}"
-        )
-
-    return symbols
+    return data[active_group]

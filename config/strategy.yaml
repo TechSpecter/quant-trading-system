@@ -1,0 +1,86 @@
+
+
+# =========================
+# STRATEGY CONFIGURATION
+# =========================
+
+strategy:
+  name: swing_mtf_v1
+  timeframe:
+    trend: "D"        # Daily timeframe
+    entry: "15"       # 15-minute timeframe
+
+# =========================
+# MARKET FILTER
+# =========================
+market_filter:
+  enabled: true
+  symbol: "NSE:NIFTY50-INDEX"
+  sma_period: 200
+
+# =========================
+# INDICATORS
+# =========================
+indicators:
+  sma:
+    long_term: 200
+
+  ema:
+    fast: 5
+    short: 10
+    medium: 20
+    long: 50
+
+  rsi:
+    period: 14
+    pullback_range: [38, 55]
+
+  volume:
+    ma_period: 20
+    breakout_multiplier: 1.2
+    lookback_days: 3
+
+  atr:
+    period: 14
+    stop_loss_multiplier: 1.5
+
+# =========================
+# ENTRY RULES
+# =========================
+entry:
+  pullback:
+    ema_zone_buffer: 0.02   # 2% proximity to EMA zone
+    min_low_volume_days: 2
+
+  trigger:
+    ema_cross: true
+    volume_confirmation: true
+
+# =========================
+# EXIT RULES
+# =========================
+exit:
+  partial:
+    rsi_threshold: 70
+    scale_out_percent: 50
+
+  trailing:
+    ema_break: 20
+    ema_cross_exit: true
+
+# =========================
+# RISK MANAGEMENT
+# =========================
+risk:
+  capital_per_trade_percent: 1
+
+# =========================
+# STATE MACHINE
+# =========================
+state:
+  enabled: true
+  states:
+    - IDLE
+    - SETUP
+    - ARMED
+    - TRIGGERED

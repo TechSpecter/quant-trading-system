@@ -7,6 +7,8 @@ from app.domain.market.fyers_client import FyersAPIClient
 from app.core.cache import get_cache, set_cache
 from app.db.repositories.market_repository import MarketRepository
 
+from app.core.utils.market_utils import is_index
+
 
 class MarketDataService:
     """
@@ -29,7 +31,7 @@ class MarketDataService:
         # 1. REDIS CACHE
         # -------------------------
         cached = await get_cache(symbol, timeframe)
-        if cached is not None:
+        if cached is not None and not cached.empty:
             print(f"⚡ Redis hit: {symbol}")
             return cached
 
@@ -37,8 +39,14 @@ class MarketDataService:
         # 2. DATABASE
         # -------------------------
         db_data = await self.repo.get_candles(self.db, symbol, timeframe)
-        if db_data is not None:
+        if db_data is not None and not db_data.empty:
             print(f"💾 DB hit: {symbol}")
+
+            # Ensure index volume is cleaned before caching
+            if is_index(symbol):
+                db_data = db_data.copy()
+                db_data["volume"] = None
+
             await set_cache(symbol, timeframe, db_data)
             return db_data
 
@@ -50,7 +58,7 @@ class MarketDataService:
         today = datetime.now()
         start = today - timedelta(days=lookback_days)
 
-        df = self.client.fetch_historical_data(
+        df = await self.client.fetch_historical_data(
             symbol=symbol,
             resolution=timeframe,
             date_from=start.strftime("%Y-%m-%d"),
@@ -58,7 +66,11 @@ class MarketDataService:
         )
 
         if df is not None and not df.empty:
-            # Persist and cache
+            if is_index(symbol):
+                df = df.copy()
+                df["volume"] = None
+
+            # Persist and cache for ALL symbols
             await self.repo.insert_candles(self.db, df, symbol, timeframe)
             await set_cache(symbol, timeframe, df)
 

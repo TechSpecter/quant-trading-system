@@ -30,9 +30,9 @@ class FyersAPIClient:
         self.log_dir = BASE_DIR / "logs"
         self.log_dir.mkdir(exist_ok=True)
 
-    def get_active_client(self):
+    async def get_active_client(self):
         """Retrieves token from Redis or returns None if re-auth is needed."""
-        raw_token = redis_client.get("fyers_access_token")
+        raw_token = await redis_client.get("fyers_access_token")
         token: Optional[str] = None
 
         if isinstance(raw_token, bytes):
@@ -89,11 +89,11 @@ class FyersAPIClient:
         logger.error(f"❌ Authentication Failed: {response}")
         return None
 
-    def fetch_historical_data(
+    async def fetch_historical_data(
         self, symbol: str, resolution: str, date_from: str, date_to: str
     ) -> Optional[pd.DataFrame]:
         """Fetch historical OHLCV data from Fyers."""
-        client = self.get_active_client()
+        client = await self.get_active_client()
 
         if not client:
             logger.error("No active Fyers client. Please authenticate first.")
