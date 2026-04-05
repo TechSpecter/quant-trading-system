@@ -221,6 +221,9 @@ async def main():
                     round(target, 2) if isinstance(target, (int, float)) else ""
                 )
 
+                risk_pct = ""
+                reward_pct = ""
+
                 if (
                     isinstance(entry_price, (int, float))
                     and isinstance(sl, (int, float))
@@ -228,9 +231,13 @@ async def main():
                 ):
                     risk = entry_price - sl
                     reward = target - entry_price
+
                     if risk > 0 and reward > 0:
                         rr_val = round(reward / risk, 2)
                         rr = f"1:{rr_val}"
+
+                        risk_pct = f"{round((risk / entry_price) * 100, 2)}%"
+                        reward_pct = f"{round((reward / entry_price) * 100, 2)}%"
                     else:
                         rr = ""
                 else:
@@ -246,12 +253,14 @@ async def main():
                         last_price,
                         entry_price,
                         target_price,
+                        sl_val,
                         rr,
+                        risk_pct,
+                        reward_pct,
                         trend_val,
                         pullback_val,
                         trigger_val,
                         reason,
-                        sl_val,
                     ]
                 )
 
@@ -266,12 +275,14 @@ async def main():
             "Last Price",
             "Entry (Planned/Actual)",
             "Target Px",
+            "StopLoss",
             "RR",
+            "Risk %",
+            "Reward %",
             "Trend (200D)",
             "Pullback(4H)",
             "Trigger(4H)",
             "Reason",
-            "StopLoss",
         ]
 
         print("\n" + "=" * 80)
