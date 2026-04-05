@@ -197,13 +197,24 @@ async def main():
 
                 last_price = round(close, 2) if isinstance(close, (int, float)) else ""
 
-                # ✅ Entry price from engine (fallback to last price if missing)
+                # ✅ Correct Entry Logic (Planned vs Actual)
+                planned_raw = r.get("planned_entry_price")
                 entry_raw = r.get("entry_price")
-                entry_price = (
-                    round(entry_raw, 2)
-                    if isinstance(entry_raw, (int, float))
-                    else last_price
-                )
+
+                if (r.get("state") or "").strip().upper() == "SETUP":
+                    # For setups → show planned entry
+                    entry_price = (
+                        round(planned_raw, 2)
+                        if isinstance(planned_raw, (int, float))
+                        else ""
+                    )
+                else:
+                    # For triggered → show actual entry
+                    entry_price = (
+                        round(entry_raw, 2)
+                        if isinstance(entry_raw, (int, float))
+                        else last_price
+                    )
 
                 target = r.get("target_price")
                 target_price = (
@@ -253,7 +264,7 @@ async def main():
             "State",
             "Score",
             "Last Price",
-            "Entry Px",
+            "Entry (Planned/Actual)",
             "Target Px",
             "RR",
             "Trend (200D)",
