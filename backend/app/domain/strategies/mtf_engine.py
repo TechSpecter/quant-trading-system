@@ -139,7 +139,7 @@ class MTFEngine:
         # Safety checks
         if df_primary is None or df_primary.empty:
             print("❌ Missing primary timeframe data")
-            return {"signal": "NO_DATA", "state": "NO_DATA", "gate_summary": {}}
+            return {"signal": "NO_DATA", "state": "IDLE", "gate_summary": {}}
 
         confirm_available = df_confirm is not None and not df_confirm.empty
 
@@ -156,7 +156,7 @@ class MTFEngine:
             return {
                 "signal": "WEAK_BUY" if gate1_pass else "NO_TRADE",
                 "score": score,
-                "state": "NO_CONFIRM",
+                "state": "IDLE",
                 "entry_price": None,
                 "stop_loss": None,
                 "gate_summary": {

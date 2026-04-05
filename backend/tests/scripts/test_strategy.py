@@ -100,9 +100,13 @@ async def main():
         # -----------------------------
         results = sorted(results, key=lambda x: x.get("score", 0), reverse=True)
 
-        high_conviction = [r for r in results if r.get("score", 0) >= 60]
-        watchlist = [r for r in results if 20 <= r.get("score", 0) < 60]
-        others = [r for r in results if r.get("score", 0) < 20]
+        high_conviction = [
+            r for r in results if (r.get("state") or "").upper() == "TRIGGERED"
+        ]
+
+        watchlist = [r for r in results if (r.get("state") or "").upper() == "SETUP"]
+
+        others = [r for r in results if (r.get("state") or "").upper() == "IDLE"]
 
         def build_table(data):
             rows = []
@@ -305,7 +309,7 @@ async def main():
         print("=" * 80)
 
         if high_conviction:
-            print(f"\n{Colors.GREEN}🔥 HIGH CONVICTION TRADES{Colors.RESET}")
+            print(f"\n{Colors.GREEN}🔥 READY TO TRADE (TRIGGERED){Colors.RESET}")
             print(
                 tabulate(
                     build_table(high_conviction), headers=headers, tablefmt="pretty"
@@ -313,7 +317,7 @@ async def main():
             )
 
         if watchlist:
-            print(f"\n{Colors.YELLOW}👀 WATCHLIST{Colors.RESET}")
+            print(f"\n{Colors.YELLOW}👀 SETUPS (WAITING FOR TRIGGER){Colors.RESET}")
             print(tabulate(build_table(watchlist), headers=headers, tablefmt="pretty"))
 
         if DEBUG and others:
@@ -322,7 +326,7 @@ async def main():
 
         print("\n" + "=" * 80)
         print(
-            f"Total Stocks Processed: {len(results)} | High Conviction: {len(high_conviction)} | Watchlist: {len(watchlist)}"
+            f"Total Stocks Processed: {len(results)} | Ready Trades: {len(high_conviction)} | Setups: {len(watchlist)}"
         )
         print("=" * 80)
 
