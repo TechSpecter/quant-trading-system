@@ -1,0 +1,8 @@
+universe_config:
+  path: "config/universe.yaml"
+  active_group: "nifty50"
+
+scanner:
+  max_results: 50
+  min_rr: 1
+  only_buy: false

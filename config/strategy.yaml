@@ -102,7 +102,7 @@ trend:
 # =========================
 entry:
   pullback:
-    ema_zone_buffer: 0.02   # 2% proximity to EMA zone
+    ema_zone_buffer: 0.05   # 2% proximity to EMA zone
     min_low_volume_days: 2
 
   trigger:

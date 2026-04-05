@@ -12,23 +12,61 @@ def _validate_dataframe(df: Optional[pd.DataFrame]) -> bool:
     return df is not None and not df.empty
 
 
-def _prepare_mtf_data(
-    df: pd.DataFrame, config: Dict[str, Any]
-) -> Dict[str, pd.DataFrame]:
-    """
-    Prepares MTF structure. For now same DF reused.
-    Later can split per timeframe.
-    """
+def _get_timeframes(config: Dict[str, Any]) -> Dict[str, str]:
     tf_cfg = config.get("timeframes", {})
-    trend_tf = tf_cfg.get("trend", "D")
-    pullback_tf = tf_cfg.get("pullback", "4H")
-    trigger_tf = tf_cfg.get("trigger", "1H")
-
     return {
-        trend_tf: df,
-        pullback_tf: df,
-        trigger_tf: df,
+        "trend": tf_cfg.get("trend", "D"),
+        "pullback": tf_cfg.get("pullback", "4H"),
+        "trigger": tf_cfg.get("trigger", "1H"),
     }
+
+
+def _fetch_single_tf(
+    symbol: str,
+    timeframe: str,
+    start: datetime,
+    end: datetime,
+    config: Dict[str, Any],
+) -> Optional[pd.DataFrame]:
+    df = get_market_data(symbol, timeframe, start, end, config)
+    if not _validate_dataframe(df):
+        return None
+    return df.copy()
+
+
+def _apply_indicators_to_df(
+    df: pd.DataFrame, indicator_pipeline: IndicatorPipeline
+) -> Optional[pd.DataFrame]:
+    df_ind = indicator_pipeline.apply(df)
+    if not _validate_dataframe(df_ind):
+        return None
+    return df_ind
+
+
+def _fetch_mtf_data(
+    symbol: str,
+    start: datetime,
+    end: datetime,
+    config: Dict[str, Any],
+    indicator_pipeline: IndicatorPipeline,
+) -> Dict[str, pd.DataFrame]:
+
+    timeframes = _get_timeframes(config)
+
+    mtf_data: Dict[str, pd.DataFrame] = {}
+
+    for _, tf in timeframes.items():
+        df = _fetch_single_tf(symbol, tf, start, end, config)
+        if df is None:
+            continue
+
+        df_ind = _apply_indicators_to_df(df, indicator_pipeline)
+        if df_ind is None:
+            continue
+
+        mtf_data[tf] = df_ind
+
+    return mtf_data
 
 
 def _extract_entry_price(result: Dict[str, Any]) -> Optional[float]:
@@ -67,28 +105,16 @@ class TradingPipeline:
         end: datetime,
     ) -> Dict[str, Any]:
 
-        # =========================
-        # STEP 1: Fetch Market Data
-        # =========================
-        df = get_market_data(symbol, timeframe, start, end, self.config)
+        mtf_data = _fetch_mtf_data(
+            symbol,
+            start,
+            end,
+            self.config,
+            self.indicator_pipeline,
+        )
 
-        if not _validate_dataframe(df):
+        if not mtf_data:
             return {"signal": "NO_DATA"}
-
-        df = df.copy()
-
-        # =========================
-        # STEP 2: Apply Indicators
-        # =========================
-        df_ind = self.indicator_pipeline.apply(df)
-
-        if not _validate_dataframe(df_ind):
-            return {"signal": "NO_DATA"}
-
-        # =========================
-        # STEP 3: Prepare MTF Data
-        # =========================
-        mtf_data = _prepare_mtf_data(df_ind, self.config)
 
         # =========================
         # STEP 4: Run Strategy
@@ -100,7 +126,19 @@ class TradingPipeline:
         # =========================
         entry_price = _extract_entry_price(strategy_output)
 
-        risk_output = evaluate_risk(df_ind, entry_price, self.config)
+        # Use trigger timeframe for risk (more precise)
+        trigger_tf = _get_timeframes(self.config).get("trigger", "1H")
+        df_trigger = mtf_data.get(trigger_tf)
+
+        if not _validate_dataframe(df_trigger):
+            return {**strategy_output, "stop_loss": None, "target": None, "rr": None}
+
+        # Type narrowing for Pylance
+        df_trigger = df_trigger if isinstance(df_trigger, pd.DataFrame) else None
+        if df_trigger is None:
+            return {**strategy_output, "stop_loss": None, "target": None, "rr": None}
+
+        risk_output = evaluate_risk(df_trigger, entry_price, self.config)
 
         # =========================
         # FINAL OUTPUT

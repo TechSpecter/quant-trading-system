@@ -1,15 +1,13 @@
 from fastapi import APIRouter, Query
-from app.domain.market.fyers_auth import FyersAuth
+from app.domain.market_data.fyers_auth import FyersAuth
 from app.core.settings import settings
+
+from app.domain.market_data.cache.redis_cache import _get_redis_client
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
 # Validate required settings
-if (
-    not settings.FYERS_CLIENT_ID
-    or not settings.FYERS_SECRET_KEY
-    or not settings.FYERS_REDIRECT_URI
-):
+if not settings.FYERS_CLIENT_ID or not settings.FYERS_REDIRECT_URI:
     raise ValueError("Missing Fyers configuration in environment variables")
 
 auth_service = FyersAuth(
@@ -27,9 +25,16 @@ def login():
 
 @router.get("/callback")
 def callback(auth_code: str = Query(...)):
-    token = auth_service.generate_access_token(auth_code)
+    try:
+        token = auth_service.generate_access_token(auth_code)
 
-    if token:
-        return {"status": "success", "token": token}
+        if token is None:
+            return {"status": "failed", "error": "Token generation failed"}
 
-    return {"status": "failed"}
+        redis_client = _get_redis_client()
+        redis_client.set("fyers_access_token", token, ex=86400)
+
+        return {"status": "success"}
+
+    except Exception as e:
+        return {"status": "failed", "error": str(e)}

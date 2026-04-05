@@ -5,36 +5,3 @@
 universe_config:
   path: "config/universe.yaml"   # external universe file (NIFTY50, NIFTY200 etc.)
   active_group: "nifty50"
-
-# -----------------------------
-# 2. Data Fetch Configuration (IMPORTANT)
-# -----------------------------
-# This defines HOW MUCH historical data to fetch
-# and WHAT candle timeframe to use
-
-data_fetch:
-  lookback:
-    "1D": 180        # fetch 180 days for daily candles
-    "15Min": 30      # fetch 30 days for 15min candles
-    "5Min": 7        # fetch 7 days for 5min candles
-
-# -----------------------------
-# 3. Multi-Timeframe Setup (for strategy later)
-# -----------------------------
-timeframes:
-  trend_tf: "1D"
-  setup_tf: "15Min"
-  entry_tf: "5Min"
-
-# -----------------------------
-# 7. Cache Configuration
-# -----------------------------
-cache:
-  ttl_seconds: 300
-
-# -----------------------------
-# 8. Data Pipeline Settings
-# -----------------------------
-data_pipeline:
-  batch_size: 500
-  max_symbols_per_run: 50

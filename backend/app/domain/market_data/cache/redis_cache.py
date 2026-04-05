@@ -25,11 +25,21 @@ def _get_ttl(config: Dict[str, Any]) -> int:
         return 300
 
 
-def _get_redis_client(config: Dict[str, Any]):
-    client = config.get("redis_client")
-    if client is None:
-        raise ValueError("Redis client not found in config")
-    return client
+import redis
+
+
+def _get_redis_client(config: Optional[Dict[str, Any]] = None):
+    # 1️⃣ Try config-based client
+    if config is not None:
+        client = config.get("redis_client")
+        if client is not None:
+            return client
+
+    # 2️⃣ Fallback to default Redis (for auth flow / standalone usage)
+    try:
+        return redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
+    except Exception as e:
+        raise ValueError(f"Redis connection failed: {e}")
 
 
 def _build_cache_key(symbol: str, timeframe: str) -> str:
@@ -76,8 +86,12 @@ def get_from_cache(
     if data is None:
         return None
 
+    # Ensure data is a string
     if isinstance(data, bytes):
         data = data.decode("utf-8")
+
+    if not isinstance(data, str):
+        return None
 
     df = _deserialize_df(data)
 
