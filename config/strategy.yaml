@@ -24,6 +24,22 @@ strategy:
       "4H": "240"
       "1H": "60"
 
+market_data:
+  chunking:
+    enabled: true
+    days_per_chunk: 10        # safe default
+    max_parallel_requests: 3  # avoid rate limit
+
+  cache:
+    enabled: true
+    ttl_seconds: 300
+
+  db:
+    min_rows_required:
+      D: 150
+      "4H": 80
+      "1H": 120
+      
 # =========================
 # MARKET FILTER
 # =========================
