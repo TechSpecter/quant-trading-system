@@ -5,10 +5,11 @@
 strategy:
   name: swing_mtf_v1
 
-  # Multi-Timeframe Configuration
+  # Multi-Timeframe Configuration (Trend → Pullback → Trigger)
   timeframes:
-    primary: "D"      # Higher timeframe (trend)
-    confirmation: "4H"  # Lower timeframe (entry/trigger)
+    trend: "D"         # Higher timeframe (trend)
+    pullback: "4H"     # Pullback timeframe
+    trigger: "1H"      # Entry trigger timeframe (NEW)
 
   data:
     # NOTE: Fyers intraday (<=240 min) supports max 100 days. Keep 4H/1H <= 90 for safety.
