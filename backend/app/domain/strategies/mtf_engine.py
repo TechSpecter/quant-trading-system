@@ -1,6 +1,10 @@
 import pandas as pd
 from typing import Dict, Any
 
+from app.domain.strategies.trend.trend_rule import is_bull_trend
+from app.domain.strategies.pullback.pullback_rule import is_pullback
+from app.domain.strategies.trigger.trigger_rule import is_trigger
+
 
 class MTFEngine:
     def __init__(self, config: Dict[str, Any]):
@@ -21,94 +25,14 @@ class MTFEngine:
     # HELPER FUNCTIONS
     # =========================
 
-    def evaluate_rules(self, row: pd.Series, rules) -> bool:
-        """Generic rule evaluator from config"""
-        for rule in rules:
-            left = row.get(rule.get("left"))
-            right = row.get(rule.get("right"))
-
-            if left is None or right is None:
-                return False
-
-            op = rule.get("operator")
-
-            if op == ">" and not (left > right):
-                return False
-            if op == "<" and not (left < right):
-                return False
-            if op == ">=" and not (left >= right):
-                return False
-            if op == "<=" and not (left <= right):
-                return False
-
-        return True
-
     def is_bull_trend(self, row: pd.Series) -> bool:
-        """Config-driven trend evaluation"""
-        trend_rules = self.config.get("trend", {}).get("rules", [])
-
-        if not trend_rules:
-            return False
-
-        return self.evaluate_rules(row, trend_rules)
+        return is_bull_trend(row, self.config)
 
     def is_pullback(self, df: pd.DataFrame, i: int) -> bool:
-        row = df.iloc[i]
-
-        ema20 = row["EMA_20"]
-        ema50 = row["EMA_50"]
-        close = row["close"]
-        rsi = row["RSI"]
-        vol = row.get("volume", None)
-        vol_ma = row.get("VOL_MA", None)
-
-        # Condition 1: EMA20 > EMA50
-        if ema20 <= ema50:
-            return False
-
-        # Condition 2: Price near EMA zone
-        buffer = self.entry_cfg["pullback"]["ema_zone_buffer"]
-        lower = ema50 * (1 - buffer)
-        upper = ema20 * (1 + buffer)
-
-        if not (lower <= close <= upper):
-            return False
-
-        # Condition 3: RSI in pullback range
-        rsi_low, rsi_high = self.ind_cfg["rsi"]["pullback_range"]
-        if not (rsi_low <= rsi <= rsi_high):
-            return False
-
-        # Condition 4: Volume dry-up (optional for indices)
-        if vol is not None and vol_ma is not None:
-            if vol > vol_ma:
-                return False
-
-        return True
+        return is_pullback(df, i, self.config)
 
     def is_trigger(self, df: pd.DataFrame, i: int) -> bool:
-        if i == 0:
-            return False
-
-        row = df.iloc[i]
-        prev = df.iloc[i - 1]
-
-        # EMA crossover
-        cross = prev["EMA_5"] <= prev["EMA_10"] and row["EMA_5"] > row["EMA_10"]
-
-        if not cross:
-            return False
-
-        # Volume confirmation
-        vol = row.get("volume", None)
-        vol_ma = row.get("VOL_MA", None)
-
-        if vol is not None and vol_ma is not None:
-            multiplier = self.ind_cfg["volume"]["breakout_multiplier"]
-            if vol < vol_ma * multiplier:
-                return False
-
-        return True
+        return is_trigger(df, i, self.config)
 
     # =========================
     # MAIN ENGINE
@@ -130,11 +54,13 @@ class MTFEngine:
 
         # Resolve timeframes
         tf_cfg = self.config.get("timeframes", {})
-        primary_tf = tf_cfg.get("primary", "D")
-        confirm_tf = tf_cfg.get("confirmation", "4H")
+        trend_tf = tf_cfg.get("trend", "D")
+        pullback_tf = tf_cfg.get("pullback", "4H")
+        trigger_tf = tf_cfg.get("trigger", "1H")
 
-        df_primary = mtf_data.get(primary_tf)
-        df_confirm = mtf_data.get(confirm_tf)
+        df_primary = mtf_data.get(trend_tf)
+        df_confirm = mtf_data.get(pullback_tf)
+        df_trigger = mtf_data.get(trigger_tf)
 
         # Safety checks
         if df_primary is None or df_primary.empty:
@@ -149,7 +75,7 @@ class MTFEngine:
             trend_weight = self.scoring_cfg.get("trend", 40)
             gate1_pass = self.is_bull_trend(last_primary)
 
-            sma_col = f"SMA_{self.ind_cfg['sma']['long_term']}"
+            sma_col = "sma_200"
 
             score = trend_weight if gate1_pass else 0
 
@@ -163,23 +89,23 @@ class MTFEngine:
                     "gate_1_trend": {
                         "passed": bool(gate1_pass),
                         "status": "PASS" if gate1_pass else "FAIL",
-                        "rule_debug": f"close={last_primary.get('close')} | EMA20={last_primary.get('EMA_20')} | EMA50={last_primary.get('EMA_50')} | SMA200={last_primary.get(sma_col)}",
+                        "rule_debug": f"close={last_primary.get('close')} | EMA20={last_primary.get('ema_20')} | EMA50={last_primary.get('ema_50')} | SMA200={last_primary.get(sma_col)}",
                         "close": (
                             float(last_primary.get("close", 0))
                             if last_primary.get("close") is not None
                             else None
                         ),
-                        "EMA_50": (
+                        "ema_50": (
                             float(val)
-                            if (val := last_primary.get("EMA_50")) is not None
+                            if (val := last_primary.get("ema_50")) is not None
                             else None
                         ),
-                        "EMA_20": (
+                        "ema_20": (
                             float(val)
-                            if (val := last_primary.get("EMA_20")) is not None
+                            if (val := last_primary.get("ema_20")) is not None
                             else None
                         ),
-                        "SMA_200": (
+                        "sma_200": (
                             float(val)
                             if sma_col in last_primary
                             and (val := last_primary.get(sma_col)) is not None
@@ -238,7 +164,10 @@ class MTFEngine:
                 # =========================
                 # GATE 3: Trigger
                 # =========================
-                if state == "SETUP" and self.is_trigger(df_confirm, i):
+                trigger_df = df_trigger if df_trigger is not None else df_confirm
+                j = len(trigger_df) - 1
+
+                if state == "SETUP" and self.is_trigger(trigger_df, j):
                     state = "TRIGGERED"
                     signal = "BUY"
 
@@ -257,7 +186,7 @@ class MTFEngine:
                         if base_price is not None:
                             entry_price = base_price * (1 + buffer_pct)
 
-                    atr = row.get("ATR", None)
+                    atr = row.get("atr", None)
 
                     if atr is not None and entry_price is not None:
                         atr_cfg = self.ind_cfg.get("atr", {})
@@ -360,7 +289,7 @@ class MTFEngine:
         if gate3_pass:
             score += trigger_weight
 
-        sma_col = f"SMA_{self.ind_cfg['sma']['long_term']}"
+        sma_col = "sma_200"
 
         max_score = (
             self.scoring_cfg.get("trend", 40)
@@ -518,23 +447,23 @@ class MTFEngine:
                 "gate_1_trend": {
                     "passed": bool(gate1_pass),
                     "status": "PASS" if gate1_pass else "FAIL",
-                    "rule_debug": f"close={last_primary.get('close')} | EMA20={last_primary.get('EMA_20')} | EMA50={last_primary.get('EMA_50')} | SMA200={last_primary.get(sma_col)}",
+                    "rule_debug": f"close={last_primary.get('close')} | EMA20={last_primary.get('ema_20')} | EMA50={last_primary.get('ema_50')} | SMA200={last_primary.get(sma_col)}",
                     "close": (
                         float(last_primary.get("close", 0))
                         if last_primary.get("close") is not None
                         else None
                     ),
-                    "EMA_50": (
+                    "ema_50": (
                         float(val)
-                        if (val := last_primary.get("EMA_50")) is not None
+                        if (val := last_primary.get("ema_50")) is not None
                         else None
                     ),
-                    "EMA_20": (
+                    "ema_20": (
                         float(val)
-                        if (val := last_primary.get("EMA_20")) is not None
+                        if (val := last_primary.get("ema_20")) is not None
                         else None
                     ),
-                    "SMA_200": (
+                    "sma_200": (
                         float(val)
                         if sma_col in last_primary
                         and (val := last_primary.get(sma_col)) is not None
@@ -547,19 +476,19 @@ class MTFEngine:
                     "ema_20": (
                         float(val)
                         if last_confirm is not None
-                        and (val := last_confirm.get("EMA_20")) is not None
+                        and (val := last_confirm.get("ema_20")) is not None
                         else None
                     ),
                     "ema_50": (
                         float(val)
                         if last_confirm is not None
-                        and (val := last_confirm.get("EMA_50")) is not None
+                        and (val := last_confirm.get("ema_50")) is not None
                         else None
                     ),
                     "rsi": (
                         float(val)
                         if last_confirm is not None
-                        and (val := last_confirm.get("RSI")) is not None
+                        and (val := last_confirm.get("rsi")) is not None
                         else None
                     ),
                     "volume_condition": (
@@ -574,13 +503,13 @@ class MTFEngine:
                     "ema_5": (
                         float(val)
                         if last_confirm is not None
-                        and (val := last_confirm.get("EMA_5")) is not None
+                        and (val := last_confirm.get("ema_5")) is not None
                         else None
                     ),
                     "ema_10": (
                         float(val)
                         if last_confirm is not None
-                        and (val := last_confirm.get("EMA_10")) is not None
+                        and (val := last_confirm.get("ema_10")) is not None
                         else None
                     ),
                     "volume_spike": (

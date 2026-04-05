@@ -2,8 +2,9 @@ import yaml
 from typing import List, Dict, Any, Optional
 
 from app.domain.market.market_data_service import MarketDataService
-from app.domain.strategies.indicators import IndicatorEngine
 from app.domain.strategies.mtf_engine import MTFEngine
+
+from app.domain.features.indicator_pipeline import IndicatorPipeline
 
 
 class StrategyService:
@@ -12,7 +13,7 @@ class StrategyService:
         self.config = self._load_config()
 
         self.market_data_service = MarketDataService(db)
-        self.indicator_engine = IndicatorEngine(self.config)
+        self.indicator_engine = IndicatorPipeline(self.config)
         self.mtf_engine = MTFEngine(self.config)
 
     # =========================
@@ -40,13 +41,14 @@ class StrategyService:
         timeframes_cfg = strategy_cfg.get("timeframes", {})
         data_cfg = strategy_cfg.get("data", {})
 
-        primary = timeframes_cfg.get("primary", "D")
-        confirmation = timeframes_cfg.get("confirmation", "4H")
+        trend = timeframes_cfg.get("trend", "D")
+        pullback = timeframes_cfg.get("pullback", "4H")
+        trigger = timeframes_cfg.get("trigger", "1H")
 
-        lookback_config = data_cfg.get("lookback", {"D": 365, "4H": 90})
+        lookback_config = data_cfg.get("lookback", {"D": 365, "4H": 90, "1H": 90})
 
         return {
-            "timeframes": [primary, confirmation],
+            "timeframes": [trend, pullback, trigger],
             "lookback_config": lookback_config,
         }
 
@@ -72,15 +74,15 @@ class StrategyService:
             if df_daily is None or df_daily.empty:
                 return None
 
-            df_daily = self.indicator_engine.apply_indicators(df_daily)
+            df_daily = self.indicator_engine.apply(df_daily)
 
             last = df_daily.iloc[-1]
-            sma_col = f"SMA_{sma_period}"
-
             close = last.get("close")
-            sma = last.get(sma_col)
+            sma = last.get("sma_200")
 
-            if close is None or sma is None:
+            import pandas as pd
+
+            if close is None or sma is None or pd.isna(close) or pd.isna(sma):
                 return None
 
             return close > sma
@@ -123,7 +125,7 @@ class StrategyService:
         # Apply indicators per timeframe
         for tf, df in mtf_data.items():
             if df is not None and not df.empty:
-                mtf_data[tf] = self.indicator_engine.apply_indicators(df)
+                mtf_data[tf] = self.indicator_engine.apply(df)
 
         # 🔥 FIX: Do NOT over-filter data (this was causing NO_DATA)
         mtf_data_clean = {}
